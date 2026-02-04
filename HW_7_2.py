@@ -6,7 +6,6 @@ from collections import UserDict
 class Field:
     def __init__(self, value):
         self.value = value
-
     def __str__(self):
         return str(self.value)
 
@@ -21,12 +20,8 @@ class Phone(Field):
 
 class Birthday(Field):
     def __init__(self, value):
-        # 1. Перевіряємо, чи є значення рядком
-        if not isinstance(value, str):
-            raise ValueError("Birthday must be a string")
-            
         try:
-            # 2. Перевіряємо формат дати
+            # Перевіряємо формат, але зберігаємо саме РЯДОК
             datetime.strptime(value, "%d.%m.%Y")
             super().__init__(value)
         except ValueError:
@@ -54,8 +49,8 @@ class Record:
 
     def __str__(self):
         phones_str = '; '.join(p.value for p in self.phones)
-        # Тепер self.birthday.value - це об'єкт date, тому strftime спрацює
-        bday_str = f", birthday: {self.birthday.value.strftime('%d.%m.%Y')}" if self.birthday else ""
+        # birthday.value — це рядок, просто додаємо його
+        bday_str = f", birthday: {self.birthday.value}" if self.birthday else ""
         return f"Contact name: {self.name.value}, phones: {phones_str}{bday_str}"
 
 class AddressBook(UserDict):
@@ -69,34 +64,25 @@ class AddressBook(UserDict):
         upcoming = []
         today = datetime.today().date()
         for user in self.data.values():
-            if not user.birthday: 
-                continue
+            if not user.birthday: continue
             
-            # Получаем объект date из поля Birthday
-            birthday_date = user.birthday.value
-            # Устанавливаем день рождения на текущий год
-            birthday_this_year = birthday_date.replace(year=today.year)
+            # Конвертуємо рядок у дату ТИМЧАСОВО для розрахунків
+            bday_obj = datetime.strptime(user.birthday.value, "%d.%m.%Y").date()
+            birthday_this_year = bday_obj.replace(year=today.year)
             
             if birthday_this_year < today: 
                 birthday_this_year = birthday_this_year.replace(year=today.year + 1)
             
             if 0 <= (birthday_this_year - today).days <= 7:
                 congrats_date = birthday_this_year
-                if congrats_date.weekday() == 5: # Суббота
-                    congrats_date += timedelta(days=2)
-                elif congrats_date.weekday() == 6: # Воскресенье
-                    congrats_date += timedelta(days=1)
+                if congrats_date.weekday() == 5: congrats_date += timedelta(days=2)
+                elif congrats_date.weekday() == 6: congrats_date += timedelta(days=1)
                 
-                upcoming.append({
-                    "name": user.name.value, 
-                    "birthday": congrats_date.strftime("%d.%m.%Y")
-                })
+                upcoming.append({"name": user.name.value, "birthday": congrats_date.strftime("%d.%m.%Y")})
         return upcoming
-    
+
     def __str__(self):
-        if not self.data:
-            return "Contact list is empty."
-        # Повертаємо всі записи, розділені новим рядком
+        if not self.data: return "Contact list is empty."
         return "\n".join(str(record) for record in self.data.values())
 
 # --- ФУНКЦІЇ ОБРОБНИКИ ---
@@ -104,19 +90,11 @@ def input_error(func):
     def inner(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except ValueError:
+        except (ValueError, IndexError):
             return "Give me name and data please. Format: [name] [phone/birthday]"
-        except (IndexError, AttributeError):
-            return "Contact not found."
         except KeyError:
             return "Contact not found."
     return inner
-
-@input_error
-def show_all(book):
-    if not book.data:
-        return "Your contacts list is empty."
-    return str(book)
 
 @input_error
 def add_contact(args, book):
@@ -134,54 +112,49 @@ def add_contact(args, book):
 def change_phone(args, book):
     name, old_p, new_p = args
     record = book.find(name)
-    if record and record.edit_phone(old_p, new_p):
-        return "Phone updated."
+    if record and record.edit_phone(old_p, new_p): return "Phone updated."
     return "Contact or old phone not found."
 
 @input_error
 def show_phone(args, book):
-    name = args[0]
-    record = book.find(name)
-    return "; ".join(p.value for p in record.phones)
+    record = book.find(args[0])
+    return "; ".join(p.value for p in record.phones) if record else "Contact not found."
 
 @input_error
 def add_birthday(args, book):
     name, bday = args
     record = book.find(name)
-    record.add_birthday(bday)
-    return "Birthday added."
+    if record:
+        record.add_birthday(bday)
+        return "Birthday added."
+    return "Contact not found."
 
 @input_error
 def show_birthday(args, book):
     record = book.find(args[0])
-    return record.birthday.value.strftime("%d.%m.%Y") if record.birthday else "No birthday set."
+    if record and record.birthday: return record.birthday.value
+    return "Birthday not set or contact not found."
 
 def get_birthdays(book):
     upcoming = book.get_upcoming_birthdays()
-    if not upcoming: 
-        return "No upcoming birthdays for the next week."
+    if not upcoming: return "No upcoming birthdays for the next week."
     return "\n".join([f"{u['name']}: {u['birthday']}" for u in upcoming])
-# --- ПЕРСИСТЕНТНІСТЬ ---
+
 def save_data(book, filename="addressbook.pkl"):
-    with open(filename, "wb") as f:
-        pickle.dump(book, f)
+    with open(filename, "wb") as f: pickle.dump(book, f)
 
 def load_data(filename="addressbook.pkl"):
     try:
-        with open(filename, "rb") as f:
-            return pickle.load(f)
-    except FileNotFoundError:
-        return AddressBook()
+        with open(filename, "rb") as f: return pickle.load(f)
+    except (FileNotFoundError, EOFError): return AddressBook()
 
 # --- ГОЛОВНИЙ ЦИКЛ ---
 def main():
     book = load_data()
     print("Welcome to the assistant bot!")
-    
     while True:
         user_input = input("Enter a command: ").strip()
         if not user_input: continue
-        
         parts = user_input.split()
         cmd, args = parts[0].lower(), parts[1:]
 
@@ -192,12 +165,10 @@ def main():
         elif cmd == "add": print(add_contact(args, book))
         elif cmd == "change": print(change_phone(args, book))
         elif cmd == "phone": print(show_phone(args, book))
-        elif cmd == "all":
-            for r in book.values(): print(r)
+        elif cmd == "all": print(book) # Тепер виводить усі контакти
         elif cmd == "add-birthday": print(add_birthday(args, book))
         elif cmd == "show-birthday": print(show_birthday(args, book))
         elif cmd == "birthdays": print(get_birthdays(book))
-        
         else: print("Invalid command.")
 
 if __name__ == "__main__":
